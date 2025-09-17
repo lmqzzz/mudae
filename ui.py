@@ -37,7 +37,6 @@ class CursesApplication:
       plan=RollPlan(
         us_uses=settings.tuning.roll_batch_size // 2,
         roll_count=0,
-        wait_for_cards=True,
       ),
       focus_index=1,
     )
@@ -51,7 +50,6 @@ class CursesApplication:
       ('roll_count', 'Roll remaining'),
       ('us_uses', 'Roll count'),
       ('use_slash_commands', 'Use slash commands'),
-      ('wait_for_cards', 'Card detection'),
     ]
 
   def _current_focus(self) -> tuple[str, str]:
@@ -74,7 +72,7 @@ class CursesApplication:
 
   def _start_edit(self, *, initial_text: str | None = None) -> None:
     field, _ = self._current_focus()
-    if field in {'wait_for_cards', 'use_slash_commands'}:
+    if field == 'use_slash_commands':
       return
     with self._state_lock:
       current_value = getattr(self._state.plan, field)
@@ -217,10 +215,6 @@ class CursesApplication:
       if key in (curses.KEY_ENTER, 10, 13, ord(' '), ord('t'), ord('T')):
         self._toggle_slash_commands()
         return
-    elif field == 'wait_for_cards':
-      if key in (curses.KEY_ENTER, 10, 13, ord(' '), ord('t'), ord('T')):
-        self._toggle_waiting()
-        return
 
     if key == curses.KEY_RESIZE:
       return
@@ -243,13 +237,6 @@ class CursesApplication:
       self._state.plan = self._state.plan.model_copy(update={'use_slash_commands': new_value})
     mode = 'slash commands' if new_value else 'text commands'
     self._log(f'Rolling via {mode}.', LogLevel.INFO)
-
-  def _toggle_waiting(self) -> None:
-    with self._state_lock:
-      new_value = not self._state.plan.wait_for_cards
-      self._state.plan = self._state.plan.model_copy(update={'wait_for_cards': new_value})
-    state = 'enabled' if new_value else 'disabled'
-    self._log(f'Card detection {state}.', LogLevel.INFO)
 
   def _trigger_roll(self) -> None:
     with self._state_lock:
@@ -299,7 +286,7 @@ class CursesApplication:
     screen.addstr(0, max(0, (width - len(title)) // 2), title)
     screen.attroff(curses.color_pair(1))
 
-    banner = 'Tab/↑/↓ move • Enter edits numbers • Space toggles card wait • r run • q quit'
+    banner = 'Tab/↑/↓ move • Enter edits numbers • Space toggles slash mode • r run • q quit'
     screen.attron(curses.color_pair(2))
     screen.addstr(2, max(0, (width - len(banner)) // 2), banner)
     screen.attroff(curses.color_pair(2))
@@ -319,8 +306,6 @@ class CursesApplication:
       if is_editing:
         buffer = state_copy.editing_buffer or ''
         value_text = buffer + '_'
-      elif field == 'wait_for_cards':
-        value_text = 'ON' if plan.wait_for_cards else 'OFF'
       elif field == 'use_slash_commands':
         value_text = 'ON' if plan.use_slash_commands else 'OFF'
       elif field == 'us_uses':

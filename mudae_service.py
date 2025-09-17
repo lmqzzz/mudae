@@ -39,14 +39,13 @@ class MudaeService:
         self._client.send_message(roll_text_command)
       total_messages += 1
 
-      if plan.wait_for_cards:
-        card = self._await_card(timeout_seconds=15.0)
-        if card:
-          cards_detected += 1
-          last_card_title = next(
-            (embed.title for embed in card.embeds if embed.title),
-            last_card_title,
-          )
+      card = self._await_card(timeout_seconds=15.0)
+      if card:
+        cards_detected += 1
+        last_card_title = next(
+          (embed.title for embed in card.embeds if embed.title),
+          last_card_title,
+        )
 
     for _ in range(plan.roll_count):
       perform_roll()

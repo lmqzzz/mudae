@@ -50,10 +50,6 @@ class RollPlan(BaseModel):
 
   us_uses: int = Field(default=0, ge=0, description='Number of $us boosts to perform')
   roll_count: int = Field(default=0, ge=0, description='Number of $wa rolls to send')
-  wait_for_cards: bool = Field(
-    default=True,
-    description='Whether to poll for a Mudae embed before issuing the next command',
-  )
   use_slash_commands: bool = Field(
     default=False,
     description='Use slash command invocation for the roll action instead of text commands',
