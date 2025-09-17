@@ -6,6 +6,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
+DEFAULT_KAKERA_TYPES: tuple[str, ...] = (
+  'kakeraP',
+  'kakeraO',
+  'kakeraR',
+  'kakeraW',
+  'kakeraL',
+)
+
 
 class DiscordSettings(BaseModel):
   """Runtime configuration for Discord API access."""
@@ -57,6 +65,17 @@ class RuntimeTuning(BaseModel):
   )
 
 
+class KakeraSettings(BaseModel):
+  """Configuration for kakera reaction behavior."""
+
+  model_config = ConfigDict(extra='forbid')
+
+  preferred_types: tuple[str, ...] = Field(
+    default=DEFAULT_KAKERA_TYPES,
+    description='Ordered list of kakera emoji names to react to when enabled',
+  )
+
+
 class AppSettings(BaseModel):
   """Aggregated application configuration."""
 
@@ -64,6 +83,7 @@ class AppSettings(BaseModel):
 
   discord: DiscordSettings
   tuning: RuntimeTuning
+  kakera: KakeraSettings
 
 
 def load_settings(env_file: str | Path | None = None) -> AppSettings:
@@ -87,4 +107,11 @@ def load_settings(env_file: str | Path | None = None) -> AppSettings:
     roll_delay_seconds=float(os.environ.get('ROLL_DELAY_SECONDS', '1.0')),
   )
 
-  return AppSettings(discord=discord_settings, tuning=tuning)
+  preferred_kakera_env = os.environ.get('KAKERA_PREFERRED_TYPES', '')
+  preferred_kakera = tuple(part.strip() for part in preferred_kakera_env.split(',') if part.strip())
+  default_kakera_types = DEFAULT_KAKERA_TYPES
+  kakera = KakeraSettings(
+    preferred_types=preferred_kakera or default_kakera_types,
+  )
+
+  return AppSettings(discord=discord_settings, tuning=tuning, kakera=kakera)

@@ -15,7 +15,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
   SlashCommander = None  # type: ignore[assignment]
 
-from models import DiscordMessage
+from models import DiscordComponent, DiscordMessage
 from settings import DiscordSettings
 
 
@@ -120,6 +120,27 @@ class DiscordHTTPClient:
       for message in messages:
         yield message
       after_id = messages[-1].id
+
+  def click_component(self, message: DiscordMessage, component: DiscordComponent) -> None:
+    if component.custom_id is None:
+      raise ValueError('Component does not define a custom_id and cannot be clicked.')
+    payload = {
+      'type': 3,
+      'guild_id': self._settings.guild_id,
+      'channel_id': self._settings.channel_id,
+      'message_id': message.id,
+      'application_id': self._settings.mudae_user_id,
+      'data': {
+        'component_type': component.type,
+        'custom_id': component.custom_id,
+      },
+      'nonce': self._generate_nonce(),
+      'session_id': self._generate_session_id(),
+    }
+    if message.flags is not None:
+      payload['message_flags'] = message.flags
+    response = self._client.post(self._INTERACTIONS_PATH, json=payload)
+    response.raise_for_status()
 
   def _resolve_slash_command_data(self, command_path: tuple[str, ...]) -> dict[str, Any]:
     if SlashCommander is None:

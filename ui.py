@@ -8,7 +8,13 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from models import LogEntry, LogLevel, RollPlan, RollSummary
+from models import (
+  KakeraReactionMode,
+  LogEntry,
+  LogLevel,
+  RollPlan,
+  RollSummary,
+)
 from mudae_service import MudaeService
 from settings import AppSettings
 
@@ -44,13 +50,16 @@ class CursesApplication:
     self._runner: threading.Thread | None = None
     self._running = True
 
-  @staticmethod
-  def _focusable_fields() -> list[tuple[str, str]]:
-    return [
+  def _focusable_fields(self) -> list[tuple[str, str]]:
+    fields = [
       ('roll_count', 'Roll remaining'),
       ('us_uses', 'Roll count'),
       ('use_slash_commands', 'Use slash commands'),
     ]
+    with self._state_lock:
+      if self._state.plan.use_slash_commands:
+        fields.append(('kakera_reaction_mode', 'Kakera reaction'))
+    return fields
 
   def _current_focus(self) -> tuple[str, str]:
     fields = self._focusable_fields()
@@ -215,6 +224,10 @@ class CursesApplication:
       if key in (curses.KEY_ENTER, 10, 13, ord(' '), ord('t'), ord('T')):
         self._toggle_slash_commands()
         return
+    elif field == 'kakera_reaction_mode':
+      if key in (curses.KEY_ENTER, 10, 13, ord(' '), curses.KEY_LEFT, curses.KEY_RIGHT):
+        self._cycle_kakera_mode()
+        return
 
     if key == curses.KEY_RESIZE:
       return
@@ -235,8 +248,23 @@ class CursesApplication:
     with self._state_lock:
       new_value = not self._state.plan.use_slash_commands
       self._state.plan = self._state.plan.model_copy(update={'use_slash_commands': new_value})
+      if not new_value:
+        self._state.focus_index %= 3
+        if self._state.editing_field == 'kakera_reaction_mode':
+          self._state.editing_field = None
+          self._state.editing_buffer = None
     mode = 'slash commands' if new_value else 'text commands'
     self._log(f'Rolling via {mode}.', LogLevel.INFO)
+
+  def _cycle_kakera_mode(self) -> None:
+    with self._state_lock:
+      plan = self._state.plan
+      modes = list(KakeraReactionMode)
+      current_index = modes.index(plan.kakera_reaction_mode)
+      new_mode = modes[(current_index + 1) % len(modes)]
+      self._state.plan = plan.model_copy(update={'kakera_reaction_mode': new_mode})
+    label = self._describe_kakera_mode(new_mode)
+    self._log(f'Kakera reaction set to {label}.', LogLevel.INFO)
 
   def _trigger_roll(self) -> None:
     with self._state_lock:
@@ -312,6 +340,8 @@ class CursesApplication:
         value_text = str(plan.us_uses)
       elif field == 'roll_count':
         value_text = str(plan.roll_count)
+      elif field == 'kakera_reaction_mode':
+        value_text = self._describe_kakera_mode(plan.kakera_reaction_mode)
       else:
         value_text = ''
 
@@ -369,6 +399,13 @@ class CursesApplication:
       self._state.logs.append(entry)
       if len(self._state.logs) > 200:
         self._state.logs.pop(0)
+
+  @staticmethod
+  def _describe_kakera_mode(mode: KakeraReactionMode) -> str:
+    return {
+      KakeraReactionMode.PREFERRED: 'Roll with react',
+      KakeraReactionMode.P_ONLY: 'Only react to kakeraP',
+    }[mode]
 
   @staticmethod
   def _init_colors() -> None:

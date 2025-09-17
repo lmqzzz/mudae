@@ -31,6 +31,29 @@ class DiscordAuthor(BaseModel):
   global_name: str | None = None
 
 
+class DiscordEmoji(BaseModel):
+  """Subset of emoji metadata used for component interactions."""
+
+  model_config = ConfigDict(extra='ignore')
+
+  id: str | None = None
+  name: str | None = None
+  animated: bool | None = None
+
+
+class DiscordComponent(BaseModel):
+  """Discord message component (buttons, action rows, etc.)."""
+
+  model_config = ConfigDict(extra='ignore')
+
+  type: int
+  custom_id: str | None = None
+  emoji: DiscordEmoji | None = None
+  label: str | None = None
+  style: int | None = None
+  components: tuple['DiscordComponent', ...] = Field(default_factory=tuple)
+
+
 class DiscordMessage(BaseModel):
   """Typed representation of a Discord channel message."""
 
@@ -41,6 +64,15 @@ class DiscordMessage(BaseModel):
   author: DiscordAuthor
   timestamp: datetime
   embeds: tuple[DiscordEmbed, ...] = Field(default_factory=tuple)
+  components: tuple[DiscordComponent, ...] = Field(default_factory=tuple)
+  flags: int | None = Field(default=None)
+
+
+class KakeraReactionMode(str, Enum):
+  """User-selectable strategy for kakera button reactions."""
+
+  P_ONLY = 'p_only'
+  PREFERRED = 'preferred'
 
 
 class RollPlan(BaseModel):
@@ -53,6 +85,10 @@ class RollPlan(BaseModel):
   use_slash_commands: bool = Field(
     default=False,
     description='Use slash command invocation for the roll action instead of text commands',
+  )
+  kakera_reaction_mode: KakeraReactionMode = Field(
+    default=KakeraReactionMode.PREFERRED,
+    description='How the service reacts to kakera buttons while rolling via slash commands',
   )
 
 
