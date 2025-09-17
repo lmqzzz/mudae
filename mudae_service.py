@@ -7,6 +7,8 @@ from discord_client import DiscordHTTPClient
 from models import DiscordMessage, RollPlan, RollSummary
 from settings import AppSettings
 
+MAX_US_BATCH_SIZE = 20
+
 
 class MudaeService:
   """High-level orchestration for sending commands to the Mudae bot."""
@@ -22,21 +24,19 @@ class MudaeService:
     cards_detected = 0
     last_card_title: str | None = None
     command_prefix = self._settings.discord.command_prefix
+    roll_delay = self._settings.tuning.roll_delay_seconds
+    roll_text_command = f'{command_prefix}wa'
 
-    if plan.us_uses > 0:
-      full_batches, remainder = divmod(plan.us_uses, 20)
-      command_sizes = [20] * full_batches
-      if remainder:
-        command_sizes.append(remainder)
-      for size in command_sizes:
-        command = f'{command_prefix}us {size}'
-        self._client.send_message(command)
-        total_messages += 1
-        time.sleep(self._settings.tuning.roll_delay_seconds)
+    def sleep_between_actions() -> None:
+      if roll_delay > 0:
+        time.sleep(roll_delay)
 
-    for _ in range(plan.roll_count):
-      roll_command = f'{command_prefix}wa'
-      self._client.send_message(roll_command)
+    def perform_roll() -> None:
+      nonlocal total_messages, cards_detected, last_card_title
+      if plan.use_slash_commands:
+        self._client.trigger_slash_command()
+      else:
+        self._client.send_message(roll_text_command)
       total_messages += 1
 
       if plan.wait_for_cards:
@@ -47,7 +47,23 @@ class MudaeService:
             (embed.title for embed in card.embeds if embed.title),
             last_card_title,
           )
-      time.sleep(self._settings.tuning.roll_delay_seconds)
+
+    for _ in range(plan.roll_count):
+      perform_roll()
+      sleep_between_actions()
+
+    us_remaining = plan.us_uses
+    while us_remaining > 0:
+      batch_size = min(MAX_US_BATCH_SIZE, us_remaining)
+      boost_command = f'{command_prefix}us {batch_size}'
+      self._client.send_message(boost_command)
+      total_messages += 1
+      us_remaining -= batch_size
+      sleep_between_actions()
+
+      for _ in range(batch_size):
+        perform_roll()
+        sleep_between_actions()
 
     duration = time.perf_counter() - start
     return RollSummary(

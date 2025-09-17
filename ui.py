@@ -49,6 +49,7 @@ class CursesApplication:
     return [
       ('us_uses', '$us boosts'),
       ('roll_count', 'Roll count'),
+      ('use_slash_commands', 'Use slash commands'),
       ('wait_for_cards', 'Card detection'),
     ]
 
@@ -72,7 +73,7 @@ class CursesApplication:
 
   def _start_edit(self, *, initial_text: str | None = None) -> None:
     field, _ = self._current_focus()
-    if field == 'wait_for_cards':
+    if field in {'wait_for_cards', 'use_slash_commands'}:
       return
     with self._state_lock:
       current_value = getattr(self._state.plan, field)
@@ -211,6 +212,10 @@ class CursesApplication:
         else:
           self._adjust_us(delta=-1)
         return
+    elif field == 'use_slash_commands':
+      if key in (curses.KEY_ENTER, 10, 13, ord(' '), ord('t'), ord('T')):
+        self._toggle_slash_commands()
+        return
     elif field == 'wait_for_cards':
       if key in (curses.KEY_ENTER, 10, 13, ord(' '), ord('t'), ord('T')):
         self._toggle_waiting()
@@ -231,6 +236,13 @@ class CursesApplication:
       self._state.plan = self._state.plan.model_copy(update={'us_uses': new_value})
     self._log(f'$us usage set to {new_value}', LogLevel.INFO)
 
+  def _toggle_slash_commands(self) -> None:
+    with self._state_lock:
+      new_value = not self._state.plan.use_slash_commands
+      self._state.plan = self._state.plan.model_copy(update={'use_slash_commands': new_value})
+    mode = 'slash commands' if new_value else 'text commands'
+    self._log(f'Rolling via {mode}.', LogLevel.INFO)
+
   def _toggle_waiting(self) -> None:
     with self._state_lock:
       new_value = not self._state.plan.wait_for_cards
@@ -246,8 +258,9 @@ class CursesApplication:
       plan = self._state.plan
       self._state.is_busy = True
 
+    mode = 'slash' if plan.use_slash_commands else 'text'
     self._log(
-      f'Launching session: $us {plan.us_uses} then {plan.roll_count} rolls.',
+      f"Launching session: $us {plan.us_uses} then {plan.roll_count} rolls via {mode} commands.",
       LogLevel.SUCCESS,
     )
 
@@ -302,10 +315,14 @@ class CursesApplication:
         value_text = buffer + '_'
       elif field == 'wait_for_cards':
         value_text = 'ON' if plan.wait_for_cards else 'OFF'
+      elif field == 'use_slash_commands':
+        value_text = 'ON' if plan.use_slash_commands else 'OFF'
       elif field == 'us_uses':
         value_text = str(plan.us_uses)
-      else:
+      elif field == 'roll_count':
         value_text = str(plan.roll_count)
+      else:
+        value_text = ''
 
       display = f'{label}: {value_text}'
       attr = curses.color_pair(5)

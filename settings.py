@@ -20,6 +20,14 @@ class DiscordSettings(BaseModel):
     default='$',
     description='Prefix used for text commands when not relying on slash commands',
   )
+  slash_roll_command: str = Field(
+    default='wa',
+    description='Slash command path (space-separated) used to perform rolls',
+  )
+
+  @property
+  def slash_roll_command_path(self) -> tuple[str, ...]:
+    return tuple(part for part in self.slash_roll_command.strip().split() if part)
 
 
 class RuntimeTuning(BaseModel):
@@ -69,6 +77,7 @@ def load_settings(env_file: str | Path | None = None) -> AppSettings:
     guild_id=os.environ['DISCORD_GUILD_ID'],
     mudae_user_id=os.environ.get('MUDAE_USER_ID', '432610292342587392'),
     command_prefix=os.environ.get('DISCORD_COMMAND_PREFIX', '$'),
+    slash_roll_command=os.environ.get('SLASH_ROLL_COMMAND', 'wa'),
   )
 
   tuning = RuntimeTuning(

@@ -54,6 +54,10 @@ class RollPlan(BaseModel):
     default=True,
     description='Whether to poll for a Mudae embed before issuing the next command',
   )
+  use_slash_commands: bool = Field(
+    default=False,
+    description='Use slash command invocation for the roll action instead of text commands',
+  )
 
 
 class RollSummary(BaseModel):
