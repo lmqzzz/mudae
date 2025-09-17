@@ -24,10 +24,15 @@ class MudaeService:
     command_prefix = self._settings.discord.command_prefix
 
     if plan.us_uses > 0:
-      command = f'{command_prefix}us {plan.us_uses}'
-      self._client.send_message(command)
-      total_messages += 1
-      time.sleep(self._settings.tuning.roll_delay_seconds)
+      full_batches, remainder = divmod(plan.us_uses, 20)
+      command_sizes = [20] * full_batches
+      if remainder:
+        command_sizes.append(remainder)
+      for size in command_sizes:
+        command = f'{command_prefix}us {size}'
+        self._client.send_message(command)
+        total_messages += 1
+        time.sleep(self._settings.tuning.roll_delay_seconds)
 
     for _ in range(plan.roll_count):
       roll_command = f'{command_prefix}wa'
