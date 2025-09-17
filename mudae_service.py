@@ -65,6 +65,9 @@ class MudaeService:
         perform_roll()
         sleep_between_actions()
 
+    self._client.send_message('Progress finished.')
+    total_messages += 1
+
     duration = time.perf_counter() - start
     return RollSummary(
       plan=plan,

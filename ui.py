@@ -36,9 +36,10 @@ class CursesApplication:
     self._state = AppState(
       plan=RollPlan(
         us_uses=settings.tuning.roll_batch_size // 2,
-        roll_count=settings.tuning.roll_batch_size,
+        roll_count=0,
         wait_for_cards=True,
-      )
+      ),
+      focus_index=1,
     )
     self._state_lock = threading.Lock()
     self._runner: threading.Thread | None = None
@@ -47,8 +48,8 @@ class CursesApplication:
   @staticmethod
   def _focusable_fields() -> list[tuple[str, str]]:
     return [
-      ('us_uses', '$us boosts'),
-      ('roll_count', 'Roll count'),
+      ('roll_count', 'Roll remaining'),
+      ('us_uses', 'Roll count'),
       ('use_slash_commands', 'Use slash commands'),
       ('wait_for_cards', 'Card detection'),
     ]
@@ -116,12 +117,12 @@ class CursesApplication:
         value = max(0, value)
         if value != plan.us_uses:
           self._state.plan = plan.model_copy(update={'us_uses': value})
-          message = f'$us usage set to {value}'
+          message = f'Roll count set to {value}'
       elif field == 'roll_count':
-        value = max(1, value)
+        value = max(0, value)
         if value != plan.roll_count:
           self._state.plan = plan.model_copy(update={'roll_count': value})
-          message = f'Roll count adjusted to {value}'
+          message = f'Roll remaining set to {value}'
 
     if message:
       self._log(message, LogLevel.INFO)
@@ -226,15 +227,15 @@ class CursesApplication:
 
   def _adjust_rolls(self, *, delta: int) -> None:
     with self._state_lock:
-      new_value = max(1, self._state.plan.roll_count + delta)
+      new_value = max(0, self._state.plan.roll_count + delta)
       self._state.plan = self._state.plan.model_copy(update={'roll_count': new_value})
-    self._log(f'Roll count adjusted to {new_value}', LogLevel.INFO)
+    self._log(f'Roll remaining set to {new_value}', LogLevel.INFO)
 
   def _adjust_us(self, *, delta: int) -> None:
     with self._state_lock:
       new_value = max(0, self._state.plan.us_uses + delta)
       self._state.plan = self._state.plan.model_copy(update={'us_uses': new_value})
-    self._log(f'$us usage set to {new_value}', LogLevel.INFO)
+    self._log(f'Roll count set to {new_value}', LogLevel.INFO)
 
   def _toggle_slash_commands(self) -> None:
     with self._state_lock:
@@ -260,7 +261,7 @@ class CursesApplication:
 
     mode = 'slash' if plan.use_slash_commands else 'text'
     self._log(
-      f"Launching session: $us {plan.us_uses} then {plan.roll_count} rolls via {mode} commands.",
+      f"Launching session: {plan.roll_count} rolls before $us, then {plan.us_uses} boosted rolls via {mode} commands.",
       LogLevel.SUCCESS,
     )
 
@@ -273,7 +274,12 @@ class CursesApplication:
       summary = self._service.execute_roll_plan(plan)
       with self._state_lock:
         self._state.last_summary = summary
-      message = f'Completed {summary.plan.roll_count} rolls, {summary.cards_detected} cards detected.'
+      total_rolls = summary.plan.roll_count + summary.plan.us_uses
+      message = (
+        f'Completed {total_rolls} rolls '
+        f'({summary.plan.roll_count} remaining + {summary.plan.us_uses} boosted), '
+        f'{summary.cards_detected} cards detected.'
+      )
       self._log(message, LogLevel.SUCCESS)
     except Exception as exc:  # noqa: BLE001
       self._log(f'Session failed: {exc}', LogLevel.ERROR)
