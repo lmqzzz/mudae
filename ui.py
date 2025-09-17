@@ -3,6 +3,7 @@ from __future__ import annotations
 import curses
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +22,9 @@ class AppState(BaseModel):
   logs: list[LogEntry] = Field(default_factory=list)
   is_busy: bool = False
   last_summary: RollSummary | None = None
+  focus_index: int = 0
+  editing_field: str | None = None
+  editing_buffer: str | None = None
 
 
 class CursesApplication:
@@ -40,6 +44,118 @@ class CursesApplication:
     self._runner: threading.Thread | None = None
     self._running = True
 
+  @staticmethod
+  def _focusable_fields() -> list[tuple[str, str]]:
+    return [
+      ('us_uses', '$us boosts'),
+      ('roll_count', 'Roll count'),
+      ('wait_for_cards', 'Card detection'),
+    ]
+
+  def _current_focus(self) -> tuple[str, str]:
+    fields = self._focusable_fields()
+    with self._state_lock:
+      index = self._state.focus_index % len(fields)
+    return fields[index]
+
+  def _is_editing(self) -> bool:
+    with self._state_lock:
+      return self._state.editing_field is not None
+
+  def _move_focus(self, delta: int) -> None:
+    fields = self._focusable_fields()
+    with self._state_lock:
+      new_index = (self._state.focus_index + delta) % len(fields)
+      self._state.focus_index = new_index
+      self._state.editing_field = None
+      self._state.editing_buffer = None
+
+  def _start_edit(self, *, initial_text: str | None = None) -> None:
+    field, _ = self._current_focus()
+    if field == 'wait_for_cards':
+      return
+    with self._state_lock:
+      current_value = getattr(self._state.plan, field)
+      buffer = initial_text if initial_text is not None else str(current_value)
+      self._state.editing_field = field
+      self._state.editing_buffer = buffer
+
+  def _cancel_edit(self) -> None:
+    with self._state_lock:
+      self._state.editing_field = None
+      self._state.editing_buffer = None
+
+  def _update_edit_buffer(self, mutate: Callable[[str], str]) -> None:
+    with self._state_lock:
+      if self._state.editing_buffer is None:
+        return
+      new_buffer = mutate(self._state.editing_buffer)
+      self._state.editing_buffer = new_buffer
+
+  def _commit_edit(self) -> None:
+    message: str | None = None
+    with self._state_lock:
+      field = self._state.editing_field
+      buffer = self._state.editing_buffer
+      if field is None:
+        return
+      self._state.editing_field = None
+      self._state.editing_buffer = None
+
+      if not buffer:
+        return
+
+      try:
+        value = int(buffer)
+      except ValueError:
+        return
+
+      plan = self._state.plan
+      if field == 'us_uses':
+        value = max(0, value)
+        if value != plan.us_uses:
+          self._state.plan = plan.model_copy(update={'us_uses': value})
+          message = f'$us usage set to {value}'
+      elif field == 'roll_count':
+        value = max(1, value)
+        if value != plan.roll_count:
+          self._state.plan = plan.model_copy(update={'roll_count': value})
+          message = f'Roll count adjusted to {value}'
+
+    if message:
+      self._log(message, LogLevel.INFO)
+
+  def _handle_editing_key(self, key: int) -> None:
+    if key == 27:  # ESC
+      self._cancel_edit()
+      return
+    if key in (curses.KEY_ENTER, 10, 13):
+      self._commit_edit()
+      return
+    if key == curses.KEY_DOWN:
+      self._commit_edit()
+      self._move_focus(1)
+      return
+    if key == curses.KEY_UP:
+      self._commit_edit()
+      self._move_focus(-1)
+      return
+    if key in (curses.KEY_CTAB, 9):
+      self._commit_edit()
+      self._move_focus(1)
+      return
+    if key in (curses.KEY_BTAB, 353):
+      self._commit_edit()
+      self._move_focus(-1)
+      return
+    if key in (curses.KEY_BACKSPACE, 127, 8):
+      self._update_edit_buffer(lambda value: value[:-1])
+      return
+    if ord('0') <= key <= ord('9'):
+      self._update_edit_buffer(lambda value: value + chr(key))
+      return
+    curses.beep()
+
   def run(self, screen: curses._CursesWindow) -> None:  # type: ignore[name-defined]
     curses.curs_set(0)
     screen.nodelay(True)
@@ -57,27 +173,49 @@ class CursesApplication:
       self._handle_key(key)
 
   def _handle_key(self, key: int) -> None:
+    if self._is_editing():
+      self._handle_editing_key(key)
+      return
+
     if key in (ord('q'), ord('Q')):
       self._running = False
       return
     if key in (ord('r'), ord('R')):
       self._trigger_roll()
       return
-    if key in (ord('+'), curses.KEY_UP):
-      self._adjust_rolls(delta=1)
+    if key in (curses.KEY_CTAB, 9, curses.KEY_DOWN):
+      self._move_focus(1)
       return
-    if key in (ord('-'), curses.KEY_DOWN):
-      self._adjust_rolls(delta=-1)
+    if key in (curses.KEY_BTAB, 353, curses.KEY_UP):
+      self._move_focus(-1)
       return
-    if key == ord('['):
-      self._adjust_us(delta=-1)
-      return
-    if key == ord(']'):
-      self._adjust_us(delta=1)
-      return
-    if key in (ord('t'), ord('T')):
-      self._toggle_waiting()
-      return
+
+    field, _ = self._current_focus()
+
+    if field in {'us_uses', 'roll_count'}:
+      if key in (curses.KEY_ENTER, 10, 13):
+        self._start_edit()
+        return
+      if ord('0') <= key <= ord('9'):
+        self._start_edit(initial_text=chr(key))
+        return
+      if key == ord('+'):
+        if field == 'roll_count':
+          self._adjust_rolls(delta=1)
+        else:
+          self._adjust_us(delta=1)
+        return
+      if key == ord('-'):
+        if field == 'roll_count':
+          self._adjust_rolls(delta=-1)
+        else:
+          self._adjust_us(delta=-1)
+        return
+    elif field == 'wait_for_cards':
+      if key in (curses.KEY_ENTER, 10, 13, ord(' '), ord('t'), ord('T')):
+        self._toggle_waiting()
+        return
+
     if key == curses.KEY_RESIZE:
       return
 
@@ -142,7 +280,7 @@ class CursesApplication:
     screen.addstr(0, max(0, (width - len(title)) // 2), title)
     screen.attroff(curses.color_pair(1))
 
-    banner = "Press 'r' to roll • '+'/'-' adjust rolls • '['/']' adjust $us • 't' toggle card wait • 'q' quit"
+    banner = 'Tab/↑/↓ move • Enter edits numbers • Space toggles card wait • r run • q quit'
     screen.attron(curses.color_pair(2))
     screen.addstr(2, max(0, (width - len(banner)) // 2), banner)
     screen.attroff(curses.color_pair(2))
@@ -154,15 +292,30 @@ class CursesApplication:
     screen.attroff(curses.color_pair(color))
 
     plan = state_copy.plan
-    plan_lines = [
-      f'$us boosts: {plan.us_uses}',
-      f'Roll count: {plan.roll_count}',
-      f'Card detection: {"ON" if plan.wait_for_cards else "OFF"}',
-    ]
-    for idx, line in enumerate(plan_lines, start=6):
-      screen.attron(curses.color_pair(5))
-      screen.addstr(idx, 4, line)
-      screen.attroff(curses.color_pair(5))
+    fields = self._focusable_fields()
+    focus_index = state_copy.focus_index % len(fields)
+    for offset, (field, label) in enumerate(fields):
+      is_focus = offset == focus_index
+      is_editing = state_copy.editing_field == field
+      if is_editing:
+        buffer = state_copy.editing_buffer or ''
+        value_text = buffer + '_'
+      elif field == 'wait_for_cards':
+        value_text = 'ON' if plan.wait_for_cards else 'OFF'
+      elif field == 'us_uses':
+        value_text = str(plan.us_uses)
+      else:
+        value_text = str(plan.roll_count)
+
+      display = f'{label}: {value_text}'
+      attr = curses.color_pair(5)
+      if is_focus:
+        attr |= curses.A_REVERSE
+      if is_editing:
+        attr |= curses.A_BOLD
+      screen.attron(attr)
+      screen.addstr(6 + offset, 4, display[: width - 8])
+      screen.attroff(attr)
 
     summary = state_copy.last_summary
     if summary:
